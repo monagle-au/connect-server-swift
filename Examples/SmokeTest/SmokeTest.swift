@@ -181,6 +181,9 @@ func printExamples() {
 // MARK: - Self-test
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 func runSelfTest(server: ConnectServer) async throws {
     // Start the server in a child task; cancel when self-test is done.
