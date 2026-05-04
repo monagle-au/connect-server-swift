@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   macos:
-    name: macOS / Swift 6.1
+    name: macOS / Swift 6.2
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -26,9 +26,9 @@ jobs:
         run: swift build --disable-default-traits
 
   linux:
-    name: Linux / Swift 6.1
+    name: Linux / Swift 6.2
     runs-on: ubuntu-latest
-    container: swift:6.1-noble
+    container: swift:6.2-noble
     steps:
       - uses: actions/checkout@v4
       - name: Show toolchain

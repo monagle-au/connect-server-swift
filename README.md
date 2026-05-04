@@ -26,7 +26,7 @@ Other features:
 
 ## Requirements
 
-- Swift 6.1+
+- Swift 6.2+
 - macOS 15.0+
 
 ## Usage
