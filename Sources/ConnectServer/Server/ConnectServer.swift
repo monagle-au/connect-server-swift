@@ -1,0 +1,70 @@
+// Copyright 2026 David Monagle / Monagle Pty Ltd
+// SPDX-License-Identifier: MIT
+
+import Hummingbird
+import HummingbirdCore
+import HummingbirdHTTP2
+import NIOSSL
+
+// MARK: - ConnectServer
+
+/// An HTTP server that serves grpc-swift-2 service handlers over Connect, gRPC-Web, and gRPC.
+///
+/// Minimal usage:
+/// ```swift
+/// var router = ConnectRouter()
+/// router.registerUnary(method: ..., requestType: ..., responseType: ...) { req, ctx in ... }
+/// let server = ConnectServer(address: .hostname("0.0.0.0", port: 8080), router: router)
+/// try await server.serve()
+/// ```
+public struct ConnectServer: Sendable {
+    private let address: BindAddress
+    private let transportSecurity: TransportSecurity
+    private let router: ConnectRouter
+
+    // MARK: - Init
+
+    public init(
+        address: BindAddress = .hostname("127.0.0.1", port: 8080),
+        transportSecurity: TransportSecurity = .plaintext,
+        router: ConnectRouter
+    ) {
+        self.address = address
+        self.transportSecurity = transportSecurity
+        self.router = router
+    }
+
+    // MARK: - Lifecycle
+
+    /// Starts the server and runs until cancelled or shutdown is requested.
+    public func serve() async throws {
+        let serverBuilder: HTTPServerBuilder = try transportSecurity.makeServerBuilder()
+        let configuration = ApplicationConfiguration(address: address)
+        let app = Application(
+            responder: router,
+            server: serverBuilder,
+            configuration: configuration
+        )
+        try await app.runService()
+    }
+}
+
+// MARK: - TransportSecurity
+
+/// Configures TLS or plaintext for the ConnectServer.
+public enum TransportSecurity: Sendable {
+    case plaintext
+    case plaintextHTTP2
+    case tls(TLSConfiguration)
+
+    fileprivate func makeServerBuilder() throws -> HTTPServerBuilder {
+        switch self {
+        case .plaintext:
+            return .http1()
+        case .plaintextHTTP2:
+            return .plaintextHTTP2()
+        case .tls(let tlsConfig):
+            return try .http2Upgrade(tlsConfiguration: tlsConfig)
+        }
+    }
+}

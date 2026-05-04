@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS / Swift 6.1
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: swift --version
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test --parallel
+      - name: Build with ConfigurationSupport disabled
+        run: swift build --disable-default-traits
+
+  linux:
+    name: Linux / Swift 6.1
+    runs-on: ubuntu-latest
+    container: swift:6.1-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: swift --version
+      - name: Build
+        run: swift build
+      # NOTE: TLS integration tests are macOS-only because they use URLSession
+      # with a custom delegate. Filter them out on Linux.
+      - name: Test (excluding TLSIntegrationTests)
+        run: swift test --parallel --skip TLSIntegrationTests
+      - name: Build with ConfigurationSupport disabled
+        run: swift build --disable-default-traits
+
+  protoc-plugin:
+    name: protoc plugin smoke test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install buf
+        run: brew install bufbuild/buf/buf
+      - name: Build plugin
+        run: swift build --product protoc-gen-connect-swift-server
+      - name: Generate from a sample .proto and compile the result
+        run: |
+          mkdir -p /tmp/plugin-smoke && cd /tmp/plugin-smoke
+          cat > greeter.proto <<'EOF'
+          syntax = "proto3";
+          package smoke;
+          service Greeter {
+            rpc SayHello(HelloRequest) returns (HelloReply);
+            rpc StreamHellos(HelloRequest) returns (stream HelloReply);
+          }
+          message HelloRequest { string name = 1; }
+          message HelloReply { string message = 1; }
+          EOF
+          cat > buf.yaml <<'EOF'
+          version: v2
+          EOF
+          cat > buf.gen.yaml <<'EOF'
+          version: v2
+          plugins:
+            - local: ${{ github.workspace }}/.build/debug/protoc-gen-connect-swift-server
+              out: gen
+          EOF
+          buf generate
+          # Smoke check: the generated file references the expected types and registration calls.
+          test -f gen/greeter.connect.swift
+          grep -q "Smoke_GreeterConnectService" gen/greeter.connect.swift
+          grep -q "registerUnary" gen/greeter.connect.swift
+          grep -q "registerServerStreaming" gen/greeter.connect.swift

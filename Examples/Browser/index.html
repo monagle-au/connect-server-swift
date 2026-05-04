@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>swift-connect-server browser smoke test</title>
+    <style>
+      body { font: 14px/1.5 -apple-system, system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
+      h1 { font-size: 1.4em; }
+      h2 { font-size: 1.05em; margin-top: 1.6em; }
+      .row { display: flex; gap: .5em; align-items: center; margin: .4em 0; }
+      input[type=text] { flex: 1; padding: .35em .5em; font: inherit; }
+      button { padding: .4em 1em; font: inherit; cursor: pointer; }
+      pre { background: #f5f5f7; padding: .8em 1em; border-radius: 6px; overflow: auto; min-height: 1.5em; white-space: pre-wrap; }
+      .err { color: #b00; }
+      .ok  { color: #0a0; }
+      .meta { color: #888; font-size: .9em; }
+    </style>
+  </head>
+  <body>
+    <h1>swift-connect-server — browser smoke test</h1>
+    <p class="meta">
+      Start the server: <code>swift run smoke-test</code> (in another terminal).<br />
+      Then open this page directly in a browser. CORS is enabled with <code>.permissive()</code> so any origin works.
+    </p>
+
+    <h2>1. Connect JSON unary success</h2>
+    <div class="row">
+      <input id="name" type="text" value="World" />
+      <button id="run-greet">POST /test.GreetService/Greet</button>
+    </div>
+    <pre id="out-greet"></pre>
+
+    <h2>2. Connect JSON unary error (always throws not_found)</h2>
+    <div class="row">
+      <button id="run-error">POST /test.GreetService/ThrowNotFound</button>
+    </div>
+    <pre id="out-error"></pre>
+
+    <h2>3. Health check</h2>
+    <div class="row">
+      <button id="run-health">POST /grpc.health.v1.Health/Check</button>
+    </div>
+    <pre id="out-health"></pre>
+
+    <h2>4. Connect server-streaming (5-byte enveloped responses)</h2>
+    <p class="meta">
+      The server emits 3 enveloped JSON greetings + an EndStreamResponse. We parse the framing manually.
+    </p>
+    <div class="row">
+      <button id="run-stream">POST /test.GreetService/GreetMany</button>
+    </div>
+    <pre id="out-stream"></pre>
+
+    <script>
+      const BASE = "http://127.0.0.1:9876";
+
+      function show(el, text, cls) {
+        el.textContent = text;
+        el.className = cls || "";
+      }
+
+      // 1. Connect JSON unary
+      document.getElementById("run-greet").addEventListener("click", async () => {
+        const out = document.getElementById("out-greet");
+        const name = document.getElementById("name").value;
+        try {
+          const res = await fetch(`${BASE}/test.GreetService/Greet`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Connect-Protocol-Version": "1" },
+            body: JSON.stringify({ name }),
+          });
+          const body = await res.text();
+          show(out, `${res.status} ${res.statusText}\n${body}`, res.ok ? "ok" : "err");
+        } catch (e) {
+          show(out, `ERROR: ${e}`, "err");
+        }
+      });
+
+      // 2. Connect JSON unary error
+      document.getElementById("run-error").addEventListener("click", async () => {
+        const out = document.getElementById("out-error");
+        try {
+          const res = await fetch(`${BASE}/test.GreetService/ThrowNotFound`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          const body = await res.text();
+          // Expect HTTP 404 + JSON {"code":"not_found", "message":"..."}
+          const ok = res.status === 404 && body.includes("not_found");
+          show(out, `${res.status} ${res.statusText}\n${body}`, ok ? "ok" : "err");
+        } catch (e) {
+          show(out, `ERROR: ${e}`, "err");
+        }
+      });
+
+      // 3. Health check
+      document.getElementById("run-health").addEventListener("click", async () => {
+        const out = document.getElementById("out-health");
+        try {
+          const res = await fetch(`${BASE}/grpc.health.v1.Health/Check`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ service: "test.GreetService" }),
+          });
+          const body = await res.text();
+          show(out, `${res.status} ${res.statusText}\n${body}`, res.ok ? "ok" : "err");
+        } catch (e) {
+          show(out, `ERROR: ${e}`, "err");
+        }
+      });
+
+      // 4. Connect server-streaming. Manually frame the input envelope and parse output frames.
+      document.getElementById("run-stream").addEventListener("click", async () => {
+        const out = document.getElementById("out-stream");
+        try {
+          // Build the input envelope: [0x00, length(BE), JSON]
+          const json = new TextEncoder().encode(JSON.stringify({ name: "Streamy" }));
+          const body = new Uint8Array(5 + json.length);
+          body[0] = 0x00;
+          new DataView(body.buffer).setUint32(1, json.length, false);
+          body.set(json, 5);
+
+          const res = await fetch(`${BASE}/test.GreetService/GreetMany`, {
+            method: "POST",
+            headers: { "Content-Type": "application/connect+json" },
+            body,
+          });
+          const buf = new Uint8Array(await res.arrayBuffer());
+          const lines = [`${res.status} ${res.statusText}`];
+          // Decode enveloped frames
+          let idx = 0;
+          while (idx + 5 <= buf.length) {
+            const flags = buf[idx];
+            const len = new DataView(buf.buffer, buf.byteOffset + idx + 1, 4).getUint32(0, false);
+            const payload = buf.slice(idx + 5, idx + 5 + len);
+            idx += 5 + len;
+            const text = new TextDecoder().decode(payload);
+            lines.push(`flags=0x${flags.toString(16).padStart(2, "0")} len=${len} body=${text}`);
+          }
+          show(out, lines.join("\n"), res.ok ? "ok" : "err");
+        } catch (e) {
+          show(out, `ERROR: ${e}`, "err");
+        }
+      });
+    </script>
+  </body>
+</html>
