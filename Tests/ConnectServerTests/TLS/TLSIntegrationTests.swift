@@ -1,6 +1,12 @@
 // Copyright 2026 David Monagle / Monagle Pty Ltd
 // SPDX-License-Identifier: MIT
 
+// These tests use URLSession with a custom auth-challenge delegate to bypass
+// self-signed cert validation. URLSession's auth-challenge callback API is only
+// available in Foundation on Darwin platforms; on Linux URLSession is in
+// FoundationNetworking and lacks the delegate API we need. Skip on Linux.
+#if canImport(Darwin)
+
 import Foundation
 import GRPCCore
 import NIOCore
@@ -157,3 +163,5 @@ private final class TrustAllDelegate: NSObject, URLSessionDelegate, Sendable {
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }
+
+#endif  // canImport(Darwin)
