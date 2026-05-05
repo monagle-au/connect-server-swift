@@ -1,8 +1,8 @@
-# Architecture Plan: connect-server-swift
+# Architecture Plan: connect-swift-server
 
 ## Summary
 
-`connect-server-swift` is a Swift package that serves grpc-swift-2 service implementations over Connect, gRPC-Web, and gRPC simultaneously on a single HTTP port. It uses Hummingbird as the HTTP server layer (handling HTTP/1.1 + HTTP/2 via ALPN), and provides its own protocol handlers for each wire format. The user writes one `SimpleServiceProtocol` conformer and registers it with `ConnectRouter`; the library handles protocol detection, codec selection (JSON or protobuf), framing, and error mapping.
+`connect-swift-server` is a Swift package that serves grpc-swift-2 service implementations over Connect, gRPC-Web, and gRPC simultaneously on a single HTTP port. It uses Hummingbird as the HTTP server layer (handling HTTP/1.1 + HTTP/2 via ALPN), and provides its own protocol handlers for each wire format. The user writes one `SimpleServiceProtocol` conformer and registers it with `ConnectRouter`; the library handles protocol detection, codec selection (JSON or protobuf), framing, and error mapping.
 
 ---
 
@@ -281,7 +281,7 @@ Error case: Same response structure, but the trailer frame has `grpc-status: <in
 ## Package Layout
 
 ```
-connect-server-swift/
+connect-swift-server/
 ├── Package.swift
 ├── ARCHITECTURE.md
 ├── README.md
