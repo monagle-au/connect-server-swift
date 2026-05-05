@@ -1,4 +1,4 @@
-# swift-connect-server
+# connect-server-swift
 
 A Swift server library that serves grpc-swift-2 service handlers over **Connect**, **gRPC-Web**, and **gRPC** simultaneously on a single HTTP port — so browsers and native clients can talk to one Swift backend without a translation proxy.
 

@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "swift-connect-server",
+    name: "connect-server-swift",
     platforms: [
         .macOS(.v15),
     ],

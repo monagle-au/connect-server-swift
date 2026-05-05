@@ -21,7 +21,7 @@ import SwiftProtobufPluginLibrary
 @main
 struct ConnectSwiftServerGenerator: CodeGenerator {
     var version: String? { "0.1.0" }
-    var projectURL: String? { "https://github.com/monagle/swift-connect-server" }
+    var projectURL: String? { "https://github.com/monagle-au/connect-server-swift" }
     var supportedFeatures: [Google_Protobuf_Compiler_CodeGeneratorResponse.Feature] = [.proto3Optional]
 
     func generate(
