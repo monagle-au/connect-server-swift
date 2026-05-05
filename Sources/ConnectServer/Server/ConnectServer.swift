@@ -45,12 +45,17 @@ public struct ConnectServer: Sendable {
             server: serverBuilder,
             configuration: configuration
         )
-        try await app.runService()
-        // Hummingbird returns cleanly when its surrounding Task is cancelled
-        // (e.g. swift-service-lifecycle requested graceful shutdown). Re-surface
-        // the cancellation as a CancellationError so ServiceGroup classifies the
-        // termination as expected rather than logging "service has finished
-        // unexpectedly". A no-op when the run returned for any other reason.
+        // Re-surface task cancellation as CancellationError so an outer
+        // ServiceGroup classifies the termination as expected. Hummingbird
+        // sometimes returns cleanly on cancel and sometimes throws a
+        // ServiceGroupError if one of its internal services (e.g. DateCache)
+        // exits before the group's cancel signal propagates — normalize both.
+        do {
+            try await app.runService()
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            throw error
+        }
         try Task.checkCancellation()
     }
 }
