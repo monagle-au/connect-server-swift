@@ -16,7 +16,9 @@ import NIOCore
 /// - Passes request headers (minus framing headers) as `GRPCCore.Metadata` to handlers.
 /// - Returns trailing metadata as `Trailer-*` prefixed response headers.
 /// - Returns errors as JSON error envelopes with appropriate HTTP status codes.
-struct ConnectProtocolHandler: Sendable {
+struct ConnectProtocolHandler: WireProtocolHandler {
+    let errorLogger: ConnectRouter.ErrorLogger?
+
     func handle(
         request: Request,
         body: ByteBuffer,
@@ -45,10 +47,8 @@ struct ConnectProtocolHandler: Sendable {
                     contentType: codec.contentType,
                     trailingMetadata: trailingMetadata
                 )
-            } catch let rpcError as RPCError {
-                return errorResponse(rpcError)
             } catch {
-                return errorResponse(RPCError(code: .internalError, message: String(describing: error)))
+                return errorResponse(reportRPCError(error, descriptor: handler.descriptor))
             }
         }
     }
@@ -117,6 +117,10 @@ struct ConnectProtocolHandler: Sendable {
         var headers = HTTPFields()
         headers[.contentType] = connectStreamingContentType
 
+        // Capture the logger for the @Sendable body closure (self can't
+        // cross that boundary cleanly under strict concurrency).
+        let logger = errorLogger
+
         let body = ResponseBody { writer in
             var streamWriter = writer
 
@@ -154,13 +158,9 @@ struct ConnectProtocolHandler: Sendable {
             do {
                 let trailingMetadata = try await task.value
                 endStream = Self.endStreamFrame(metadata: trailingMetadata, error: nil)
-            } catch let rpcError as RPCError {
-                endStream = Self.endStreamFrame(metadata: rpcError.metadata, error: rpcError)
             } catch {
-                endStream = Self.endStreamFrame(
-                    metadata: GRPCCore.Metadata(),
-                    error: RPCError(code: .internalError, message: String(describing: error))
-                )
+                let rpc = Self.reportRPCError(error, descriptor: descriptor, logger: logger)
+                endStream = Self.endStreamFrame(metadata: rpc.metadata, error: rpc)
             }
             try await streamWriter.write(endStream)
             try await streamWriter.finish(nil)
@@ -250,13 +250,9 @@ struct ConnectProtocolHandler: Sendable {
                     try await writer.finish(nil)
                 }
                 return Response(status: .ok, headers: headers, body: body)
-            } catch let rpcError as RPCError {
-                return connectStreamingErrorResponse(rpcError, contentType: connectStreamingContentType)
             } catch {
-                return connectStreamingErrorResponse(
-                    RPCError(code: .internalError, message: String(describing: error)),
-                    contentType: connectStreamingContentType
-                )
+                let rpc = reportRPCError(error, descriptor: descriptor)
+                return connectStreamingErrorResponse(rpc, contentType: connectStreamingContentType)
             }
         }
     }
@@ -283,6 +279,8 @@ struct ConnectProtocolHandler: Sendable {
 
         var headers = HTTPFields()
         headers[.contentType] = connectStreamingContentType
+
+        let logger = errorLogger
 
         let body = ResponseBody { writer in
             var streamWriter = writer
@@ -319,13 +317,9 @@ struct ConnectProtocolHandler: Sendable {
             do {
                 let trailingMetadata = try await task.value
                 endStream = Self.endStreamFrame(metadata: trailingMetadata, error: nil)
-            } catch let rpcError as RPCError {
-                endStream = Self.endStreamFrame(metadata: rpcError.metadata, error: rpcError)
             } catch {
-                endStream = Self.endStreamFrame(
-                    metadata: GRPCCore.Metadata(),
-                    error: RPCError(code: .internalError, message: String(describing: error))
-                )
+                let rpc = Self.reportRPCError(error, descriptor: descriptor, logger: logger)
+                endStream = Self.endStreamFrame(metadata: rpc.metadata, error: rpc)
             }
             try await streamWriter.write(endStream)
             try await streamWriter.finish(nil)

@@ -31,6 +31,17 @@ import Tracing
 /// try await server.serve()
 /// ```
 public struct ConnectRouter: Sendable {
+    /// Closure invoked when a handler throws, before the error is serialised to
+    /// the wire. Lets consumers log every failure with their own logger and
+    /// trace context. The router does no logging itself; the closure receives
+    /// the raw error and the method descriptor that was being dispatched, and
+    /// `ServiceContext.current` is available inside the closure for trace IDs.
+    ///
+    /// Called for both `RPCError`s thrown by handlers and unexpected errors.
+    /// Errors thrown by the wire decoder (malformed envelopes, bad headers)
+    /// are also reported with the matched descriptor when available.
+    public typealias ErrorLogger = @Sendable (_ error: any Error, _ descriptor: MethodDescriptor) -> Void
+
     // MARK: - Internal state
 
     var handlers: [MethodDescriptor: MethodHandler] = [:]
@@ -49,12 +60,17 @@ public struct ConnectRouter: Sendable {
     /// services exposed to untrusted clients.
     public var maxMessageBytes: Int
 
+    /// Optional callback invoked when a handler throws. See ``ErrorLogger``.
+    public var errorLogger: ErrorLogger?
+
     public init(
         cors: CORSConfiguration? = nil,
-        maxMessageBytes: Int = 4 * 1024 * 1024
+        maxMessageBytes: Int = 4 * 1024 * 1024,
+        errorLogger: ErrorLogger? = nil
     ) {
         self.cors = cors
         self.maxMessageBytes = maxMessageBytes
+        self.errorLogger = errorLogger
     }
 
     // MARK: - Registration — simple (message-level, matches SimpleServiceProtocol)
@@ -238,43 +254,43 @@ extension ConnectRouter: HTTPResponder {
                     span.setStatus(.init(code: .error, message: err.message))
                     return addingCORSHeaders(connectErrorResponse(err), for: request)
                 }
-                response = await ConnectProtocolHandler().handle(
+                response = await ConnectProtocolHandler(errorLogger: errorLogger).handle(
                     request: request, body: body, handler: handler, codec: detected.codec
                 )
             case (.connect, .serverStreaming):
-                response = await ConnectProtocolHandler().handleServerStreaming(
+                response = await ConnectProtocolHandler(errorLogger: errorLogger).handleServerStreaming(
                     request: request, body: body, handler: handler, codec: detected.codec
                 )
             case (.grpcWeb, .unary):
-                response = await GRPCWebProtocolHandler().handle(
+                response = await GRPCWebProtocolHandler(errorLogger: errorLogger).handle(
                     request: request, body: body, handler: handler, codec: detected.codec
                 )
             case (.grpcWeb, .serverStreaming):
-                response = await GRPCWebProtocolHandler().handleServerStreaming(
+                response = await GRPCWebProtocolHandler(errorLogger: errorLogger).handleServerStreaming(
                     request: request, body: body, handler: handler, codec: detected.codec
                 )
             case (.grpc, .unary):
-                response = await GRPCProtocolHandler().handle(
+                response = await GRPCProtocolHandler(errorLogger: errorLogger).handle(
                     request: request, body: body, handler: handler, codec: detected.codec
                 )
             case (.grpc, .serverStreaming):
-                response = await GRPCProtocolHandler().handleServerStreaming(
+                response = await GRPCProtocolHandler(errorLogger: errorLogger).handleServerStreaming(
                     request: request, body: body, handler: handler, codec: detected.codec
                 )
             case (.connect, .clientStreaming):
-                response = await ConnectProtocolHandler().handleClientStreaming(
+                response = await ConnectProtocolHandler(errorLogger: errorLogger).handleClientStreaming(
                     request: request, handler: handler, codec: detected.codec, maxMessageBytes: maxMessageBytes
                 )
             case (.grpcWeb, .clientStreaming):
-                response = await GRPCWebProtocolHandler().handleClientStreaming(
+                response = await GRPCWebProtocolHandler(errorLogger: errorLogger).handleClientStreaming(
                     request: request, handler: handler, codec: detected.codec, maxMessageBytes: maxMessageBytes
                 )
             case (.grpc, .clientStreaming):
-                response = await GRPCProtocolHandler().handleClientStreaming(
+                response = await GRPCProtocolHandler(errorLogger: errorLogger).handleClientStreaming(
                     request: request, handler: handler, codec: detected.codec, maxMessageBytes: maxMessageBytes
                 )
             case (.connect, .bidirectional):
-                response = await ConnectProtocolHandler().handleBidi(
+                response = await ConnectProtocolHandler(errorLogger: errorLogger).handleBidi(
                     request: request, handler: handler, codec: detected.codec, maxMessageBytes: maxMessageBytes
                 )
             case (.grpcWeb, .bidirectional):
@@ -282,7 +298,7 @@ extension ConnectRouter: HTTPResponder {
                 span.setStatus(.init(code: .error, message: err.message))
                 return addingCORSHeaders(connectErrorResponse(err), for: request)
             case (.grpc, .bidirectional):
-                response = await GRPCProtocolHandler().handleBidi(
+                response = await GRPCProtocolHandler(errorLogger: errorLogger).handleBidi(
                     request: request, handler: handler, codec: detected.codec, maxMessageBytes: maxMessageBytes
                 )
             }

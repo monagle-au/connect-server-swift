@@ -17,7 +17,9 @@ import NIOCore
 ///
 /// Note: gRPC requires HTTP/2. Hummingbird passes HTTP/2 trailers via
 /// `ResponseBodyWriter.finish(_ trailingHeaders: HTTPFields?)`.
-struct GRPCProtocolHandler: Sendable {
+struct GRPCProtocolHandler: WireProtocolHandler {
+    let errorLogger: ConnectRouter.ErrorLogger?
+
     func handle(
         request: Request,
         body: ByteBuffer,
@@ -33,7 +35,10 @@ struct GRPCProtocolHandler: Sendable {
             }
             messagePayload = payload
         } catch {
-            return grpcErrorResponse(RPCError(code: .internalError, message: "Failed to decode gRPC frame: \(error)"))
+            return grpcErrorResponse(reportRPCError(
+                RPCError(code: .internalError, message: "Failed to decode gRPC frame: \(error)"),
+                descriptor: handler.descriptor
+            ))
         }
 
         let metadata = GRPCCore.Metadata(httpHeaders: request.headers)
@@ -66,10 +71,8 @@ struct GRPCProtocolHandler: Sendable {
                     try await writer.finish(trailers)
                 }
                 return Response(status: .ok, headers: responseHeaders, body: body)
-            } catch let rpcError as RPCError {
-                return grpcErrorResponse(rpcError)
             } catch {
-                return grpcErrorResponse(RPCError(code: .internalError, message: String(describing: error)))
+                return grpcErrorResponse(reportRPCError(error, descriptor: handler.descriptor))
             }
         }
     }
@@ -122,12 +125,16 @@ struct GRPCProtocolHandler: Sendable {
             }
             messagePayload = payload
         } catch {
-            return grpcErrorResponse(RPCError(code: .internalError, message: "Failed to decode gRPC frame: \(error)"))
+            return grpcErrorResponse(reportRPCError(
+                RPCError(code: .internalError, message: "Failed to decode gRPC frame: \(error)"),
+                descriptor: handler.descriptor
+            ))
         }
 
         let metadata = GRPCCore.Metadata(httpHeaders: request.headers)
         let deadline = Timeout.parseGRPC(request.headers[HTTPField.Name("grpc-timeout")!])
         let descriptor = handler.descriptor
+        let logger = errorLogger
         guard let serverStreamingHandler = handler.handleServerStreaming else {
             return grpcErrorResponse(RPCError(code: .internalError, message: "Handler is not server-streaming"))
         }
@@ -172,16 +179,11 @@ struct GRPCProtocolHandler: Sendable {
             do {
                 let trailingMetadata = try await task.value
                 trailerFields = Self.trailerFields(status: 0, message: nil, metadata: trailingMetadata)
-            } catch let rpcError as RPCError {
-                trailerFields = Self.trailerFields(
-                    status: StatusMapping.grpcStatusCode(for: rpcError.code),
-                    message: rpcError.message,
-                    metadata: GRPCCore.Metadata()
-                )
             } catch {
+                let rpc = Self.reportRPCError(error, descriptor: descriptor, logger: logger)
                 trailerFields = Self.trailerFields(
-                    status: StatusMapping.grpcStatusCode(for: .internalError),
-                    message: String(describing: error),
+                    status: StatusMapping.grpcStatusCode(for: rpc.code),
+                    message: rpc.message,
                     metadata: GRPCCore.Metadata()
                 )
             }
@@ -225,10 +227,8 @@ struct GRPCProtocolHandler: Sendable {
                     try await writer.finish(trailers)
                 }
                 return Response(status: .ok, headers: headers, body: body)
-            } catch let rpcError as RPCError {
-                return grpcErrorResponse(rpcError)
             } catch {
-                return grpcErrorResponse(RPCError(code: .internalError, message: String(describing: error)))
+                return grpcErrorResponse(reportRPCError(error, descriptor: descriptor))
             }
         }
     }
@@ -244,6 +244,7 @@ struct GRPCProtocolHandler: Sendable {
         let metadata = GRPCCore.Metadata(httpHeaders: request.headers)
         let deadline = Timeout.parseGRPC(request.headers[HTTPField.Name("grpc-timeout")!])
         let descriptor = handler.descriptor
+        let logger = errorLogger
         guard let bidiHandler = handler.handleBidi else {
             return grpcErrorResponse(RPCError(code: .internalError, message: "Handler is not bidirectional"))
         }
@@ -288,16 +289,11 @@ struct GRPCProtocolHandler: Sendable {
             do {
                 let trailingMetadata = try await task.value
                 trailerFields = Self.trailerFields(status: 0, message: nil, metadata: trailingMetadata)
-            } catch let rpcError as RPCError {
-                trailerFields = Self.trailerFields(
-                    status: StatusMapping.grpcStatusCode(for: rpcError.code),
-                    message: rpcError.message,
-                    metadata: GRPCCore.Metadata()
-                )
             } catch {
+                let rpc = Self.reportRPCError(error, descriptor: descriptor, logger: logger)
                 trailerFields = Self.trailerFields(
-                    status: StatusMapping.grpcStatusCode(for: .internalError),
-                    message: String(describing: error),
+                    status: StatusMapping.grpcStatusCode(for: rpc.code),
+                    message: rpc.message,
                     metadata: GRPCCore.Metadata()
                 )
             }
