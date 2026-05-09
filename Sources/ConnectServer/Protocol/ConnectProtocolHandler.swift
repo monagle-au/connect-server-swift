@@ -17,6 +17,12 @@ import NIOCore
 /// - Returns trailing metadata as `Trailer-*` prefixed response headers.
 /// - Returns errors as JSON error envelopes with appropriate HTTP status codes.
 struct ConnectProtocolHandler: Sendable {
+    let errorLogger: ConnectRouter.ErrorLogger?
+
+    init(errorLogger: ConnectRouter.ErrorLogger? = nil) {
+        self.errorLogger = errorLogger
+    }
+
     func handle(
         request: Request,
         body: ByteBuffer,
@@ -46,8 +52,10 @@ struct ConnectProtocolHandler: Sendable {
                     trailingMetadata: trailingMetadata
                 )
             } catch let rpcError as RPCError {
+                errorLogger?(rpcError, handler.descriptor)
                 return errorResponse(rpcError)
             } catch {
+                errorLogger?(error, handler.descriptor)
                 return errorResponse(RPCError(code: .internalError, message: String(describing: error)))
             }
         }
@@ -155,8 +163,10 @@ struct ConnectProtocolHandler: Sendable {
                 let trailingMetadata = try await task.value
                 endStream = Self.endStreamFrame(metadata: trailingMetadata, error: nil)
             } catch let rpcError as RPCError {
+                errorLogger?(rpcError, descriptor)
                 endStream = Self.endStreamFrame(metadata: rpcError.metadata, error: rpcError)
             } catch {
+                errorLogger?(error, descriptor)
                 endStream = Self.endStreamFrame(
                     metadata: GRPCCore.Metadata(),
                     error: RPCError(code: .internalError, message: String(describing: error))
@@ -251,8 +261,10 @@ struct ConnectProtocolHandler: Sendable {
                 }
                 return Response(status: .ok, headers: headers, body: body)
             } catch let rpcError as RPCError {
+                errorLogger?(rpcError, descriptor)
                 return connectStreamingErrorResponse(rpcError, contentType: connectStreamingContentType)
             } catch {
+                errorLogger?(error, descriptor)
                 return connectStreamingErrorResponse(
                     RPCError(code: .internalError, message: String(describing: error)),
                     contentType: connectStreamingContentType
@@ -320,8 +332,10 @@ struct ConnectProtocolHandler: Sendable {
                 let trailingMetadata = try await task.value
                 endStream = Self.endStreamFrame(metadata: trailingMetadata, error: nil)
             } catch let rpcError as RPCError {
+                errorLogger?(rpcError, descriptor)
                 endStream = Self.endStreamFrame(metadata: rpcError.metadata, error: rpcError)
             } catch {
+                errorLogger?(error, descriptor)
                 endStream = Self.endStreamFrame(
                     metadata: GRPCCore.Metadata(),
                     error: RPCError(code: .internalError, message: String(describing: error))

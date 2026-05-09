@@ -14,6 +14,12 @@ import NIOCore
 /// - Request body:  [5-byte header: flags + length][protobuf message]
 /// - Response body: [5-byte header][proto response] [5-byte trailer header 0x80][trailer block]
 struct GRPCWebProtocolHandler: Sendable {
+    let errorLogger: ConnectRouter.ErrorLogger?
+
+    init(errorLogger: ConnectRouter.ErrorLogger? = nil) {
+        self.errorLogger = errorLogger
+    }
+
     func handle(
         request: Request,
         body: ByteBuffer,
@@ -32,6 +38,7 @@ struct GRPCWebProtocolHandler: Sendable {
             }
             messagePayload = payload
         } catch {
+            errorLogger?(error, handler.descriptor)
             return grpcWebErrorResponse(RPCError(code: .internalError, message: "Failed to decode gRPC-Web frame: \(error)"))
         }
 
@@ -58,8 +65,10 @@ struct GRPCWebProtocolHandler: Sendable {
                     contentType: request.headers[.contentType] ?? "application/grpc-web+proto"
                 )
             } catch let rpcError as RPCError {
+                errorLogger?(rpcError, handler.descriptor)
                 return grpcWebErrorResponse(rpcError)
             } catch {
+                errorLogger?(error, handler.descriptor)
                 return grpcWebErrorResponse(RPCError(code: .internalError, message: String(describing: error)))
             }
         }
@@ -112,6 +121,9 @@ struct GRPCWebProtocolHandler: Sendable {
         let metadata = GRPCCore.Metadata(httpHeaders: request.headers)
         let deadline = Timeout.parseGRPC(request.headers[HTTPField.Name("grpc-timeout")!])
         let descriptor = handler.descriptor
+        // Capture errorLogger to a local so the @Sendable ResponseBody closure
+        // doesn't have to retain a non-Sendable self.
+        let logger = errorLogger
         guard let serverStreamingHandler = handler.handleServerStreaming else {
             return grpcWebErrorResponse(RPCError(code: .internalError, message: "Handler is not server-streaming"))
         }
@@ -163,12 +175,14 @@ struct GRPCWebProtocolHandler: Sendable {
                 let trailingMetadata = try await task.value
                 trailerFrame = GRPCWebTrailers.frame(status: 0, message: nil, metadata: trailingMetadata)
             } catch let rpcError as RPCError {
+                logger?(rpcError, descriptor)
                 trailerFrame = GRPCWebTrailers.frame(
                     status: StatusMapping.grpcStatusCode(for: rpcError.code),
                     message: rpcError.message,
                     metadata: GRPCCore.Metadata()
                 )
             } catch {
+                logger?(error, descriptor)
                 trailerFrame = GRPCWebTrailers.frame(
                     status: StatusMapping.grpcStatusCode(for: .internalError),
                     message: String(describing: error),
@@ -214,8 +228,10 @@ struct GRPCWebProtocolHandler: Sendable {
                     contentType: request.headers[.contentType] ?? "application/grpc-web+proto"
                 )
             } catch let rpcError as RPCError {
+                errorLogger?(rpcError, descriptor)
                 return grpcWebErrorResponse(rpcError)
             } catch {
+                errorLogger?(error, descriptor)
                 return grpcWebErrorResponse(RPCError(code: .internalError, message: String(describing: error)))
             }
         }
